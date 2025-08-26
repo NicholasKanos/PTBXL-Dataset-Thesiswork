@@ -1,12 +1,12 @@
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from models.transformer import ECG_Transformer
+from models.xresnet1d import XResNet1D
 
-class LitTransformer(pl.LightningModule):
+class LitXResNet1D(pl.LightningModule):
     def __init__(self, model_args, lr=1e-3):
         super().__init__()
-        self.model = ECG_Transformer(**model_args)
+        self.model = XResNet1D(**model_args)
         self.lr = lr
 
     def forward(self, x):

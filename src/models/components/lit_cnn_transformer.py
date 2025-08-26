@@ -1,12 +1,12 @@
 import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from models.transformer import ECG_Transformer
+from models.cnn_transformer import CNN_Transformer
 
-class LitTransformer(pl.LightningModule):
+class LitCNNTransformer(pl.LightningModule):
     def __init__(self, model_args, lr=1e-3):
         super().__init__()
-        self.model = ECG_Transformer(**model_args)
+        self.model = CNN_Transformer(**model_args)
         self.lr = lr
 
     def forward(self, x):
