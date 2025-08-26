@@ -75,17 +75,17 @@ def main():
     parser.add_argument('--num-workers', type=int, default=2, help='OSC suggests <=2 workers')
     args = parser.parse_args()
 
-    # --------------------
+    
     # Reproducibility
-    # --------------------
+    
     pl.seed_everything(args.seed, workers=True)
 
     # Ensure checkpoint dir exists (fixed dirpath usage)
     os.makedirs('lightning_logs/checkpoints', exist_ok=True)
 
-    # --------------------
+   
     # Callbacks
-    # --------------------
+    
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         save_top_k=1,
@@ -97,9 +97,9 @@ def main():
     )
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
-    # --------------------
+   
     # Data prep
-    # --------------------
+    
     df = pd.read_csv(args.csv_path)
     df['scp_codes'] = df['scp_codes'].apply(ast.literal_eval)
     df['diagnostic_superclass'] = df['scp_codes'].apply(lambda x: list(x.keys()))
@@ -133,9 +133,9 @@ def main():
     neg = torch.tensor(y_train.shape[0] - y_train.sum(axis=0), dtype=torch.float32) + 1e-6
     pos_weight = neg / pos  # shape [num_classes]
 
-    # --------------------
+  
     # Model
-    # --------------------
+    
     model = get_model(
         args.model,
         input_shape=(args.input_channels, args.seq_len),
@@ -151,9 +151,9 @@ def main():
         
     )
 
-    # --------------------
+   
     # Logger (W&B)
-    # --------------------
+  
     logger = None
     if args.wandb:
         logger = WandbLogger(
@@ -179,9 +179,9 @@ def main():
         except Exception:
             pass
 
-    # --------------------
+   
     # Trainer
-    # --------------------
+   
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
         callbacks=[checkpoint_callback, lr_monitor],

@@ -85,9 +85,9 @@ def main():
     parser.add_argument("--sr", type=int, default=500, choices=[100, 500])
     args = parser.parse_args()
 
-    # --------------------
+    
     # Dataframe & labels
-    # --------------------
+    
     df = pd.read_csv(args.csv_path)
     df["scp_codes"] = df["scp_codes"].apply(ast.literal_eval)
     df["diagnostic_superclass"] = df["scp_codes"].apply(lambda x: list(x.keys()))
@@ -111,9 +111,9 @@ def main():
     val_ds = PTBXL_Dataset(val_rec, y_val, args.signal_path, sr=args.sr)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size)
 
-    # --------------------
+  
     # Build model & load checkpoint (auto-detect arch + pos_embed)
-    # --------------------
+   
     ckpt_path = pick_checkpoint(args)
 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
@@ -190,9 +190,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     lit_model.to(device)
 
-    # --------------------
+    
     # Eval loop
-    # --------------------
+   
     y_true, y_pred = [], []
     with torch.no_grad():
         for signals, labels in val_loader:
@@ -210,9 +210,9 @@ def main():
     y_true = y_true_all[:, target_idxs]
     y_pred = y_pred_all[:, target_idxs]
 
-    # --------------------
+    
     # Metrics
-    # --------------------
+    
     macro_auc = roc_auc_score(y_true, y_pred, average="macro")
     print("Macro ROC AUC (8 targets):", macro_auc)
 
@@ -225,16 +225,16 @@ def main():
         except ValueError:
             print(f"AUROC for {cls}: not defined (only one class present in y_true)")
 
-    # --------------------
+    
     # Baseline threshold=0.5 report
-    # --------------------
+   
     y_pred_05 = (y_pred >= 0.5).astype(np.int32)
     print("\nClassification Report (threshold=0.5, 8 targets):")
     print(classification_report(y_true, y_pred_05, target_names=present_targets))
 
-    # --------------------
+   
     # Threshold tuning per class for F1
-    # --------------------
+  
     best_thresholds = []
     for c in range(y_true.shape[1]):
         p, r, t = precision_recall_curve(y_true[:, c], y_pred[:, c])
