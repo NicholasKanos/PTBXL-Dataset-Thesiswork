@@ -83,7 +83,7 @@ def main():
     # Ensure checkpoint dir exists (fixed dirpath usage)
     os.makedirs('lightning_logs/checkpoints', exist_ok=True)
 
-   
+    
     # Callbacks
     
     checkpoint_callback = ModelCheckpoint(
@@ -92,12 +92,12 @@ def main():
         save_last=True,
         mode="min",
         dirpath="lightning_logs/checkpoints",
-        filename="epoch{epoch}-step{step}-val{val_loss:.4f}",
+        filename="epoch={epoch}-step={step}-val_loss={val_loss:.4f}",
         every_n_epochs=1,
     )
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
-   
+    
     # Data prep
     
     df = pd.read_csv(args.csv_path)
@@ -133,7 +133,7 @@ def main():
     neg = torch.tensor(y_train.shape[0] - y_train.sum(axis=0), dtype=torch.float32) + 1e-6
     pos_weight = neg / pos  # shape [num_classes]
 
-  
+    
     # Model
     
     model = get_model(
@@ -151,9 +151,9 @@ def main():
         
     )
 
-   
+    
     # Logger (W&B)
-  
+    
     logger = None
     if args.wandb:
         logger = WandbLogger(
@@ -179,9 +179,9 @@ def main():
         except Exception:
             pass
 
-   
+    
     # Trainer
-   
+    
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
         callbacks=[checkpoint_callback, lr_monitor],

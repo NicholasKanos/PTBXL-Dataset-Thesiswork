@@ -1,15 +1,9 @@
 # Filename: src/eval.py
-# Purpose : Evaluate a trained checkpoint on the PTB-XL validation split.
-#           - Auto-detects whether the checkpoint is Transformer or CNN+Transformer
-#           - Auto-detects whether positional embeddings (pos_embed) were used
-#           - Fits label space on ALL classes in CSV (to match checkpoint head)
-#           - Reports Macro ROC AUC + AUROC per class for 8 target classes only
 
 import argparse
 import glob
 import os
 import ast
-import re
 import numpy as np
 import pandas as pd
 import torch
@@ -18,7 +12,8 @@ import wfdb
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, roc_auc_score, precision_recall_curve
+from sklearn.metrics import classification_report
+from torchmetrics.functional.classification import multilabel_accuracy as tm_multilabel_accuracy
 
 from models.components.lit_generic import LitGenericModel
 from models.torch_models.model_selector import get_model
@@ -26,7 +21,7 @@ from models.torch_models.model_selector import get_model
 # Allowlist optimizer classes that may appear inside Lightning checkpoints when loading with weights_only
 add_safe_globals([torch.optim.AdamW])
 
-# --- Evaluate only these 8 classes ---
+# Evaluate only these 8 classes if present in the CSV label space
 TARGET_CLASSES = ['NORM', 'AFIB', 'PVC', 'LVH', 'IMI', 'ASMI', 'LAFB', 'IRBBB']
 
 
@@ -66,11 +61,11 @@ def pick_checkpoint(args):
     candidates = sorted(glob.glob(os.path.join(ckpt_dir, "*.ckpt")))
     if not candidates:
         raise FileNotFoundError(f"No checkpoints found in: {ckpt_dir}")
-    return candidates[-1]  # newest by lexicographic sort (filenames contain epoch/step)
+    return candidates[-1]  # newest by lexicographic sort
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate a model with PyTorch Lightning")
+    parser = argparse.ArgumentParser(description="Evaluate a model and print VAL classification report + TRAIN accuracy")
     parser.add_argument("--model", type=str, required=True,
                         help="Model name (cnn_transformer, resnet1d, transformer, xlstm, xresnet1d, or 'auto')")
     parser.add_argument("--input-channels", type=int, default=12)
@@ -98,32 +93,30 @@ def main():
 
     # Map from our 8 target class names to their indices in the full class list
     name_to_idx = {name: i for i, name in enumerate(mlb.classes_)}
-    missing_targets = [c for c in TARGET_CLASSES if c not in name_to_idx]
-    if missing_targets:
-        print(f"WARNING: These target classes are not present in this CSV label space and will be skipped: {missing_targets}")
-    target_idxs = [name_to_idx[c] for c in TARGET_CLASSES if c in name_to_idx]
+    present_targets = [c for c in TARGET_CLASSES if c in name_to_idx]
+    if not present_targets:
+        raise RuntimeError("None of the requested TARGET_CLASSES exist in the fitted label space.")
+    target_idxs = [name_to_idx[c] for c in present_targets]
 
     records = df["filename_hr"].str.replace(".hea", "", regex=False).values
 
-    # Use the same split seed as training for reproducibility
-    _, val_rec, _, y_val = train_test_split(records, y, test_size=0.2, random_state=42)
+    # Same split seed as training for reproducibility
+    train_rec, val_rec, y_train, y_val = train_test_split(records, y, test_size=0.2, random_state=42)
 
-    val_ds = PTBXL_Dataset(val_rec, y_val, args.signal_path, sr=args.sr)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size)
+    train_ds = PTBXL_Dataset(train_rec, y_train, args.signal_path, sr=args.sr)
+    val_ds   = PTBXL_Dataset(val_rec, y_val, args.signal_path, sr=args.sr)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size)
+    val_loader   = DataLoader(val_ds, batch_size=args.batch_size)
 
-  
-    # Build model & load checkpoint (auto-detect arch + pos_embed)
-   
+    
+    # Build model & load checkpoint
+    
     ckpt_path = pick_checkpoint(args)
-
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     ckpt_sd = ckpt["state_dict"]
-    ckpt_keys = list(ckpt_sd.keys())
 
-    # Heuristics to sniff arch + features from the checkpoint
-    has_tx  = any(("transformer" in k.lower() or "encoder" in k.lower() or "input_linear" in k) for k in ckpt_keys)
-    has_cnn = any(("cnn." in k.lower() or "conv" in k.lower()) for k in ckpt_keys)
-    has_pos = any("pos_embed" in k for k in ckpt_keys)
+    has_tx  = any(("transformer" in k.lower() or "encoder" in k.lower() or "input_linear" in k) for k in ckpt_sd.keys())
+    has_cnn = any(("cnn." in k.lower() or "conv" in k.lower()) for k in ckpt_sd.keys())
 
     detected_model = args.model
     if args.model == "auto":
@@ -131,18 +124,8 @@ def main():
             detected_model = "cnn_transformer"
         elif has_tx:
             detected_model = "transformer"
-        else:
-            detected_model = args.model
 
-    # If the user passed a model that clearly doesn't match the ckpt, switch to avoid state_dict errors
-    if args.model == "cnn_transformer" and has_tx and not has_cnn:
-        print("NOTE: Checkpoint looks like a pure Transformer; switching to --model transformer for eval.")
-        detected_model = "transformer"
-    elif args.model == "transformer" and has_tx and has_cnn:
-        print("NOTE: Checkpoint looks like a CNN+Transformer; switching to --model cnn_transformer for eval.")
-        detected_model = "cnn_transformer"
-
-    # Infer number of classes from checkpoint if possible (fc layer out_features)
+    # Infer number of classes from checkpoint if possible
     ckpt_num_classes = None
     for k in ["model.fc.weight", "model.classifier.weight", "model.head.weight"]:
         if k in ckpt_sd:
@@ -151,48 +134,23 @@ def main():
     if ckpt_num_classes is None:
         ckpt_num_classes = len(mlb.classes_)
 
-    # Try to pass use_pos_embed if the build function supports it
-    use_pos_embed = has_pos
-    try:
-        model = get_model(
-            detected_model,
-            input_shape=(args.input_channels, args.seq_len),
-            num_classes=ckpt_num_classes,
-            use_pos_embed=use_pos_embed,
-        )
-    except TypeError:
-        model = get_model(
-            detected_model,
-            input_shape=(args.input_channels, args.seq_len),
-            num_classes=ckpt_num_classes,
-        )
+    # Instantiate backbone
+    model = get_model(
+        detected_model,
+        input_shape=(args.input_channels, args.seq_len),
+        num_classes=ckpt_num_classes,
+    )
 
-    # Prefer a robust load. If checkpoint includes legacy loss_fn keys, drop them.
-    legacy_loss_keys = [k for k in ckpt_sd.keys() if k.startswith("loss_fn.")]
-    if legacy_loss_keys:
-        print(f"NOTE: Dropping legacy loss keys from checkpoint: {legacy_loss_keys}")
-        for k in legacy_loss_keys:
-            ckpt_sd.pop(k, None)
-
-    # Build LightningModule and load state dict non-strictly to allow minor head/token differences
+    # Build LightningModule and load state dict non-strictly
     lit_model = LitGenericModel(model)
-    missing, unexpected = lit_model.load_state_dict(ckpt_sd, strict=False)
-
-    if unexpected:
-        print(f"WARNING: Unexpected keys ignored during load: {unexpected}")
-    if missing:
-        if all("pos_embed" in k for k in missing):
-            print("WARNING: pos_embed not found in checkpoint; proceeding with default-initialized pos_embed.")
-        else:
-            print(f"WARNING: Missing keys during load: {missing}")
-
+    lit_model.load_state_dict(ckpt_sd, strict=False)
     lit_model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     lit_model.to(device)
 
     
-    # Eval loop
-   
+    # VAL inference for classification report
+    
     y_true, y_pred = [], []
     with torch.no_grad():
         for signals, labels in val_loader:
@@ -204,53 +162,42 @@ def main():
     y_true_all = np.vstack(y_true)
     y_pred_all = np.vstack(y_pred)
 
-    # Slice to our 8 target classes
-    if len(target_idxs) == 0:
-        raise RuntimeError("None of the requested TARGET_CLASSES exist in the fitted label space; cannot compute metrics.")
+    # Slice to our present targets
     y_true = y_true_all[:, target_idxs]
     y_pred = y_pred_all[:, target_idxs]
 
-    
-    # Metrics
-    
-    macro_auc = roc_auc_score(y_true, y_pred, average="macro")
-    print("Macro ROC AUC (8 targets):", macro_auc)
+    # Print validation classification report
+    y_pred_bin = (y_pred >= 0.5).astype(int)
 
-    # AUROC per class
-    present_targets = [c for c in TARGET_CLASSES if c in name_to_idx]
-    for i, cls in enumerate(present_targets):
-        try:
-            auc_val = roc_auc_score(y_true[:, i], y_pred[:, i])
-            print(f"AUROC for {cls}: {auc_val:.4f}")
-        except ValueError:
-            print(f"AUROC for {cls}: not defined (only one class present in y_true)")
+    print("\nClassification Report:")
+    print(classification_report(
+        y_true, y_pred_bin, target_names=present_targets, zero_division=0
+    ))
 
     
-    # Baseline threshold=0.5 report
-   
-    y_pred_05 = (y_pred >= 0.5).astype(np.int32)
-    print("\nClassification Report (threshold=0.5, 8 targets):")
-    print(classification_report(y_true, y_pred_05, target_names=present_targets))
+    # TRAIN accuracy (TorchMetrics multilabel_accuracy, micro, thr=0.5)
+    
+    t_true, t_pred = [], []
+    with torch.no_grad():
+        for signals, labels in train_loader:
+            signals = signals.to(device)
+            outputs = lit_model(signals)
+            t_true.append(labels.numpy())
+            t_pred.append(torch.sigmoid(outputs).cpu().numpy())
 
-   
-    # Threshold tuning per class for F1
-  
-    best_thresholds = []
-    for c in range(y_true.shape[1]):
-        p, r, t = precision_recall_curve(y_true[:, c], y_pred[:, c])
-        f1s = (2 * p[1:] * r[1:]) / (p[1:] + r[1:] + 1e-12)
-        if len(f1s) == 0:
-            best_thresholds.append(0.5)
-            continue
-        best_idx = np.nanargmax(f1s)
-        best_thr = t[best_idx]
-        best_thresholds.append(float(best_thr))
+    t_true = np.vstack(t_true)[:, target_idxs]
+    t_pred = np.vstack(t_pred)[:, target_idxs]
 
-    print("Per-class tuned thresholds:", dict(zip(present_targets, [f"{th:.3f}" for th in best_thresholds])))
+    tm_train_acc = tm_multilabel_accuracy(
+        torch.tensor(t_pred, dtype=torch.float32),
+        torch.tensor(t_true, dtype=torch.int32),
+        num_labels=len(target_idxs),
+        threshold=0.5,
+        average="micro",
+    ).item()
 
-    y_pred_bin = (y_pred >= np.array(best_thresholds)[None, :]).astype(np.int32)
-    print("Classification Report with tuned thresholds (8 targets):")
-    print(classification_report(y_true, y_pred_bin, target_names=present_targets))
+    print("\nAccuracy:")
+    print(f" {tm_train_acc:.3f}")
 
 
 if __name__ == "__main__":
