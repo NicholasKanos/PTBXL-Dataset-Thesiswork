@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import torch
 import wfdb
-
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.model_selection import GroupShuffleSplit, train_test_split
@@ -25,7 +24,7 @@ from models.torch_models.model_selector import get_model
 
 class PTBXL_Dataset(torch.utils.data.Dataset):
     """PTB-XL dataset that returns (T, C) tensors per record with per-lead z-score normalization.
-       Optionally applies light train-time augmentations."""
+    Optionally applies light train-time augmentations."""
     def __init__(self, records, labels, signal_path, sr=500, training=False, augment=False):
         self.records = records
         self.labels = labels
@@ -67,13 +66,11 @@ class PTBXL_Dataset(torch.utils.data.Dataset):
         signal, _ = wfdb.rdsamp(f"{self.signal_path}/{rec}")  # (samples, channels)
         seq_len = 5000 if self.sr == 500 else 1000
         signal = signal[:seq_len]  # (T, C)
-
         # Per-lead z-score (record-wise)
         mean = signal.mean(axis=0, keepdims=True)
         std = signal.std(axis=0, keepdims=True) + 1e-6
         signal = (signal - mean) / std
-
-        signal = torch.tensor(signal, dtype=torch.float32)   # (T, C)
+        signal = torch.tensor(signal, dtype=torch.float32)  # (T, C)
         signal = self._augment(signal)
         label = torch.tensor(label, dtype=torch.float32)
         return signal, label
@@ -81,8 +78,7 @@ class PTBXL_Dataset(torch.utils.data.Dataset):
 
 def main():
     parser = argparse.ArgumentParser(description='Train a model with PyTorch Lightning (W&B enabled)')
-    parser.add_argument('--model', type=str, required=True,
-                        help='Model name (cnn_transformer, resnet1d, transformer, xlstm, xresnet1d)')
+    parser.add_argument('--model', type=str, required=True, help='Model name (cnn_transformer, resnet1d, transformer, xlstm, xresnet1d)')
     parser.add_argument('--input-channels', type=int, default=12)
     parser.add_argument('--seq-len', type=int, default=5000)
     parser.add_argument('--num-classes', type=int, default=8)  # overridden by mlb below
@@ -91,27 +87,21 @@ def main():
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--signal-path', type=str, required=True)
     parser.add_argument('--csv-path', type=str, required=True)
-    parser.add_argument('--sr', type=int, default=500, choices=[100, 500],
-                        help='Sampling rate per lead used for sequence length (100->1000, 500->5000)')
-
+    parser.add_argument('--sr', type=int, default=500, choices=[100, 500], help='Sampling rate per lead used for sequence length (100->1000, 500->5000)')
     # Regularization / scheduling knobs
     parser.add_argument('--label-smoothing', type=float, default=0.05)
     parser.add_argument('--early-patience', type=int, default=8)
     parser.add_argument('--early-min-delta', type=float, default=1e-3)
     parser.add_argument('--augment', action='store_true', help='Enable train-time augmentations')
     parser.add_argument('--grad-clip', type=float, default=1.0)
-
     # EarlyStopping control
-    parser.add_argument('--no-early-stop', action='store_true',
-                        help='Disable EarlyStopping and always train to max_epochs')
-
+    parser.add_argument('--no-early-stop', action='store_true', help='Disable EarlyStopping and always train to max_epochs')
     # Weights & Biases flags
     parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
     parser.add_argument('--project', type=str, default='ptbxl-ecg', help='W&B project name')
     parser.add_argument('--entity', type=str, default=None, help='W&B entity (user or team)')
     parser.add_argument('--run-name', type=str, default=None, help='W&B run name')
     parser.add_argument('--log-artifact', action='store_true', help='Log best checkpoint to W&B as an artifact')
-
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--num-workers', type=int, default=2, help='OSC suggests <=2 workers')
     args = parser.parse_args()
@@ -132,6 +122,16 @@ def main():
         filename="epoch={epoch}-step={step}-val_loss={val_loss:.4f}",
         every_n_epochs=1,
     )
+    # Additional best-by-accuracy checkpoint (pairs with val_acc logged by LitGenericModel)
+    acc_checkpoint = ModelCheckpoint(
+        monitor="val_acc",
+        save_top_k=1,
+        mode="max",
+        dirpath="lightning_logs/checkpoints",
+        filename="epoch={epoch}-step={step}-val_acc={val_acc:.4f}",
+        every_n_epochs=1,
+    )
+
     lr_monitor = LearningRateMonitor(logging_interval='step')
     early_stop = EarlyStopping(
         monitor="val_loss",
@@ -140,7 +140,7 @@ def main():
         min_delta=args.early_min_delta,
         verbose=True
     )
-    callbacks = [checkpoint_callback, lr_monitor]
+    callbacks = [checkpoint_callback, acc_checkpoint, lr_monitor]
     if not args.no_early_stop:
         callbacks.append(early_stop)
 
@@ -148,22 +148,14 @@ def main():
     # Data prep (8 target classes)
     # =========================
     TARGET_CLASSES = ['NORM', 'AFIB', 'PVC', 'LVH', 'IMI', 'ASMI', 'LAFB', 'IRBBB']
-
     df = pd.read_csv(args.csv_path)
     df['scp_codes'] = df['scp_codes'].apply(ast.literal_eval)
-
-    # extract keys and keep only the 8 classes
     df['scp_keys'] = df['scp_codes'].apply(lambda x: list(x.keys()))
     df['scp_filtered'] = df['scp_keys'].apply(lambda keys: [k for k in keys if k in TARGET_CLASSES])
-
-    # keep rows that contain at least one of the 8 targets
     df = df[df['scp_filtered'].map(len) > 0].reset_index(drop=True)
 
-    # fixed class order = TARGET_CLASSES
     mlb = MultiLabelBinarizer(classes=TARGET_CLASSES)
     y = mlb.fit_transform(df['scp_filtered'])
-
-    # filenames
     records = df['filename_hr'].str.replace('.hea', '', regex=False).values
 
     # =========================
@@ -189,17 +181,13 @@ def main():
     val_ds = PTBXL_Dataset(val_rec, y_val, args.signal_path, sr=args.sr, training=False, augment=False)
 
     pin = torch.cuda.is_available()
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                              num_workers=args.num_workers, pin_memory=pin)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size,
-                            num_workers=args.num_workers, pin_memory=pin)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=pin)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, num_workers=args.num_workers, pin_memory=pin)
 
     # --- compute class imbalance weights on the TRAIN split only ---
     pos = torch.tensor(y_train.sum(axis=0), dtype=torch.float32) + 1e-6
-    neg = torch.tensor(y_train.shape(0) - y_train.sum(axis=0), dtype=torch.float32) + 1e-6 if False else None
-    # Correct computation:
     neg = torch.tensor(y_train.shape[0] - y_train.sum(axis=0), dtype=torch.float32) + 1e-6
-    pos_weight = (neg / pos).clamp(max=10.0)  # cap to avoid ultra-conservative behavior
+    pos_weight = (neg / pos).clamp(max=10.0)
 
     # Model
     model = get_model(
@@ -207,15 +195,16 @@ def main():
         input_shape=(args.input_channels, args.seq_len),
         num_classes=len(mlb.classes_),
     )
+
     lit_model = LitGenericModel(
         model=model,
         lr=args.lr,
         weight_decay=1e-2,
         pos_weight=pos_weight,
         optimizer_class=torch.optim.AdamW,
-        use_scheduler=True,               # hooks ReduceLROnPlateau in Lit module
+        use_scheduler=True,
         label_smoothing=getattr(args, "label_smoothing", 0.0),
-        class_names=list(mlb.classes_)    # helpful for logs
+        class_names=list(mlb.classes_)
     )
 
     # Logger (W&B)
@@ -230,6 +219,7 @@ def main():
         )
         logger.experiment.define_metric("train_loss", summary="min")
         logger.experiment.define_metric("val_loss", summary="min")
+        logger.experiment.define_metric("val_acc", summary="max")  # <-- accuracy metric
         logger.experiment.define_metric("lr", summary="last")
         logger.experiment.config.update({
             **vars(args),
@@ -271,8 +261,7 @@ def main():
             name=f"{args.model}-best",
             type="model",
             metadata={
-                "best_model_score": float(checkpoint_callback.best_model_score.cpu().item())
-                    if checkpoint_callback.best_model_score is not None else None,
+                "best_model_score": float(checkpoint_callback.best_model_score.cpu().item()) if checkpoint_callback.best_model_score is not None else None,
                 "classes": list(mlb.classes_),
                 **{k: v for k, v in vars(args).items() if k not in {"entity"}}
             }
