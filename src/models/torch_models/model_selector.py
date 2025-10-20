@@ -1,5 +1,3 @@
-# models/model_selector.py
-
 def get_model(name, input_shape, num_classes, **kwargs):
     if name == "resnet1d":
         from .resnet1d import build_model

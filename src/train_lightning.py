@@ -1,6 +1,5 @@
-# Filename: src/train_lightning.py (W&B-enabled)
 # Purpose : Train ECG model with BCEWithLogitsLoss(+pos_weight), AdamW, optional EarlyStopping,
-#           ReduceLROnPlateau (inside Lit module), patient-wise split, and light time-series augmentations.
+# ReduceLROnPlateau (inside Lit module), patient-wise split, and light time-series augmentations.
 
 import argparse
 import ast
@@ -144,9 +143,9 @@ def main():
     if not args.no_early_stop:
         callbacks.append(early_stop)
 
-    # =========================
-    # Data prep (8 target classes)
-    # =========================
+    
+    # ~~~~~~~~~~~~~~~~~~~ Data prep (8 target classes) ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    
     TARGET_CLASSES = ['NORM', 'AFIB', 'PVC', 'LVH', 'IMI', 'ASMI', 'LAFB', 'IRBBB']
     df = pd.read_csv(args.csv_path)
     df['scp_codes'] = df['scp_codes'].apply(ast.literal_eval)
@@ -158,9 +157,9 @@ def main():
     y = mlb.fit_transform(df['scp_filtered'])
     records = df['filename_hr'].str.replace('.hea', '', regex=False).values
 
-    # =========================
-    # Patient-wise split (leakage-safe)
-    # =========================
+    
+    # ~~~~~~~~~~~~~~~~~ Patient-wise split (leakage-safe) ~~~~~~~~~~~~~~~~~~~~~
+    
     if 'patient_id' in df.columns:
         groups = df['patient_id'].values
         gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=args.seed)

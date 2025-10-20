@@ -1,6 +1,6 @@
 # Filename: src/models/components/lit_generic.py
 # Updated LitGenericModel with BCEWithLogitsLoss, AdamW scheduler fixes,
-# and training-only multilabel Accuracy (lazy init on first batch).
+
 
 import pytorch_lightning as pl
 import torch

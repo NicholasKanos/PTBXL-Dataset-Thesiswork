@@ -1,12 +1,10 @@
-# models/transformer.py
-
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-# --- Small helpers ------------------------------------------------------------
+# ------------------- Small helpers -------------------
 
 class SE1D(nn.Module):
     """Squeeze-Excite for 1D feature maps: emphasize informative leads early."""
@@ -72,7 +70,7 @@ class SinusoidalPositionalEncoding(nn.Module):
         return x + self.scale * self.pe[:, :L, :]
 
 
-# --- Model --------------------------------------------------------------------
+# ------------------- Model -------------------------
 
 class ECG_Transformer(nn.Module):
     """

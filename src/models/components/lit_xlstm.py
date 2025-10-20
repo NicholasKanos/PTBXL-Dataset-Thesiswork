@@ -1,4 +1,3 @@
-# lit_xlstm_improved.py
 import math
 from typing import Optional
 import torch
@@ -7,7 +6,6 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from torchmetrics.classification import MultilabelAUROC, MultilabelAveragePrecision
 
-# swap this import to your improved model if desired
 try:
     from models.xlstm_improved import xLSTMECG_Improved as xLSTMECG
 except Exception:

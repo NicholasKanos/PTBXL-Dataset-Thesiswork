@@ -1,5 +1,3 @@
-# models/cnn_transformer.py
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,9 +28,9 @@ class CNNTransformer(nn.Module):
         self,
         seq_len=5000,
         num_features=12,
-        d_model=128,      # bumped default width
-        nhead=4,          # must divide d_model
-        num_layers=4,     # a bit deeper
+        d_model=128,      
+        nhead=4,         
+        num_layers=4,     
         num_classes=8,
         stem_hidden=64,
         dropout=0.1,
@@ -51,7 +49,7 @@ class CNNTransformer(nn.Module):
         self.pos_emb = None
         self.emb_dropout = nn.Dropout(emb_dropout)
 
-        # Optional CLS token if you prefer (disabled by default with pool="avg")
+       
         self.use_cls = (pool == "cls")
         if self.use_cls:
             self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))

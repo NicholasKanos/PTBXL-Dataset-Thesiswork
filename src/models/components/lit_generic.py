@@ -1,4 +1,3 @@
-# Filename: src/models/components/lit_generic.py
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -32,8 +31,8 @@ class LitGenericModel(pl.LightningModule):
             self.pos_weight = None
 
         # CHANGED: do NOT prebuild BCEWithLogitsLoss with a CPU pos_weight tensor
-        # We will construct the criterion on-the-fly in _bce_loss() so it’s on the right device.
-        self._external_loss = loss_fn  # user-supplied criterion (rare)
+        
+        self._external_loss = loss_fn  
 
         self.optimizer_class = optimizer_class
         self.use_scheduler = use_scheduler
@@ -44,7 +43,7 @@ class LitGenericModel(pl.LightningModule):
         self._train_acc = None
         self._val_acc = None
         self._num_labels = None
-        # NEW: richer multilabel metrics (lazy-init too)
+        # NEW: richer multilabel metrics 
         self._val_auroc = None
         self._val_auprc = None
 
@@ -85,7 +84,7 @@ class LitGenericModel(pl.LightningModule):
         eps = self.label_smoothing
         return y * (1.0 - eps) + 0.5 * eps
 
-    # NEW: build BCEWithLogitsLoss on-the-fly with device-correct pos_weight
+    # NEW: build BCEWithLogitsLoss 
     def _bce_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         if self._external_loss is not None:
             return self._external_loss(logits, targets)

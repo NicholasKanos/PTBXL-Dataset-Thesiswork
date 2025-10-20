@@ -1,5 +1,3 @@
-# models/components/lit_transformer.py
-
 import math
 import numpy as np
 import torch
@@ -228,6 +226,6 @@ class LitTransformer(pl.LightningModule):
         if self.use_ema and self._ema is not None:
             self._ema.update(self.model)
 
-    # ---------------- Optimizer (unchanged) ----------------
+    # ---------------- Optimizer ----------------
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
